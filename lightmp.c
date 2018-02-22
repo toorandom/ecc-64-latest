@@ -1,0 +1,1169 @@
+/*
+Little implementation of some modular arithmetic routines for big numbers
+by
+Eduardo Ruiz Duarte
+beck@math.co.ro
+*/
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+#include <math.h>
+#include "lightmp.h"
+#include "elgamal.h"
+
+long
+max (long a, long b)
+{
+  return (a + b + abs (a - b)) / 2;
+}
+
+    /* same thing but the minimum */
+long
+min (long a, long b)
+{
+  return (a + b - abs (a - b)) / 2;
+}
+
+
+/* Malloc wrapper to check if memory is available */
+void *
+xcalloc (size_t n, int siz)
+{
+  bint *ptr;
+  if ((ptr = calloc (n, siz)) == NULL)
+    {
+      perror ("calloc: Could not allocate memory\n");
+      exit (EXIT_FAILURE);
+    }
+  return ptr;
+}
+
+/* malloc for bints */
+void *
+bint_alloc (const long digits, unsigned char sign)
+{
+/*
+printf("%d\n",digits);
+*/
+  bint *n;
+  n = xcalloc (1, sizeof (struct bint_t));
+  n->sign = sign;
+  n->digits = xcalloc (digits + 1, sizeof (unsigned char));
+  n->len = digits;
+  bint_normalize (n);
+  return n;
+}
+
+/* free  of bints */
+void
+bint_free (bint * n)
+{
+   free (n->digits);
+   free (n);
+}
+
+/* Allocates a bint *x 
+ * using the number expressed in ascii from ascii_num
+ */
+bint *
+atobint (char *ascii_num, bint * x)
+{
+  int i = 0, pf = 0, nf = 0, alen = strlen (ascii_num);
+  switch (ascii_num[0])
+    {
+    case POSITIVE:
+      pf = 1;
+      break;
+    case NEGATIVE:
+      nf = 1;
+      break;
+    default:
+      pf = 1;
+    }
+
+/* Normaliza numeros, si estos comienzan con cero, los elimina */
+  if (ascii_num[0 + nf] == '0')
+    {
+
+      while (ascii_num[i + nf] == '0')
+	i++;
+
+      ascii_num = ascii_num + i;
+
+      if (nf)
+	{
+	  ascii_num = ascii_num + 1;
+	}
+      alen = alen - i - nf;
+    }
+
+
+  for (i = 0 + nf; i < alen; i++)
+    {
+      if (!isdigit (ascii_num[i]))
+	{
+	  fprintf (stdout, "%s (%c) is not a number\n", ascii_num,
+		   ascii_num[i]);
+	  exit (EXIT_FAILURE);
+	}
+    }
+  for (i = alen - 1; i >= 0 + nf; i--)
+    x->digits[alen - 1 - i] = ascii_num[i] - '0';
+  x->sign = pf > 0 ? POSITIVE : NEGATIVE;
+  x->len = alen;
+  bint_normalize (x);
+  return x;
+}
+
+/*
+ * Computes c such that c=a-b
+ */
+bint *
+bint_sub (bint * a, bint * b, bint * c)
+{
+  int i, cf = 0, t, swapped = 0;
+  bint *temp;
+  bint_normalize (a);
+  bint_normalize (b);
+  c->sign = POSITIVE;
+
+  if ((a->sign == POSITIVE) && (b->sign == NEGATIVE))
+    {
+      b->sign = POSITIVE;
+      c = bint_add (a, b, c);
+      b->sign = NEGATIVE;
+      bint_normalize (c);
+      return c;
+    }
+
+
+  if ((a->sign == NEGATIVE) && (b->sign == POSITIVE))
+    {
+      a->sign = POSITIVE;
+      c = bint_add (a, b, c);
+      a->sign = NEGATIVE;
+      c->sign = NEGATIVE;
+      bint_normalize (c);
+      return c;
+    }
+  if (bint_cmp (a, b) == SECOND_GREATER)
+    {
+      temp = a;
+      a = b;
+      b = temp;
+      swapped = 1;
+    }
+  for (i = 0; i < b->len; i++)
+    {
+      t = a->digits[i] - (b->digits[i] + cf);
+      if (t < 0)
+	{
+	  cf = 1;
+	  t = BASE - abs (t);
+	}
+      else
+	cf = 0;
+
+      c->digits[i] = t % BASE;
+    }
+  for (; i < a->len; i++)
+    {
+      t = a->digits[i] - cf;
+      if (t < 0)
+	{
+	  cf = 1;
+	  t = BASE - abs (t);
+	}
+      else
+	cf = 0;
+      c->digits[i] = t;
+    }
+
+  c->digits[i] = cf;
+  c->len = i + 2;
+/* Regresamos los punteros a la normalidad si estos fueron volteados pero con el resultado flagueado como negativo*/
+  bint_normalize (c);
+  if (swapped)
+    {
+      temp = a;
+      a = b;
+      b = temp;
+      c->sign = NEGATIVE;
+    }
+  if (c->len < 1)
+    {
+      c->len = 1;
+      c->digits[0] = 0;
+    }
+  bint_normalize (c);
+  return c;
+}
+
+/* suma dos numerotes O(n) si n es el numero de digitos*/
+/* lo mismo que en la resta
+ * c debe de tener memoria lista para almacenar a+b
+ */
+bint *
+bint_add (bint * a, bint * b, bint * c)
+{
+  int i, cf = 0, t;
+  if ((a->sign == NEGATIVE) && (b->sign == POSITIVE))
+    {
+      a->sign = POSITIVE;
+      c = bint_sub (b, a, c);
+      bint_normalize (c);
+      b->sign = POSITIVE;
+      a->sign = NEGATIVE;
+      return c;
+    }
+  if ((a->sign == POSITIVE) && (b->sign == NEGATIVE))
+    {
+      b->sign = POSITIVE;
+      c = bint_sub (a, b, c);
+      bint_normalize (c);
+      a->sign = POSITIVE;
+      b->sign = NEGATIVE;
+      return c;
+    }
+  if ((a->sign == NEGATIVE) && (b->sign == NEGATIVE))
+    c->sign = NEGATIVE;
+
+
+  /* sumamos lo que el minimo sumando le es posible con el otro sumando */
+  for (i = 0; i < min (a->len, b->len); i++)
+    {
+      /* sumamos los dos digitos */
+      t = a->digits[i] + b->digits[i] + cf;
+      /* sumamos el digito menos significativo (o digitos dependiendo la base) */
+      c->digits[i] = t % BASE;
+      /* si t es mayor a la base (generalmente 10) quiere decir que necesitamos aumentar el carry flag + 1 */
+      cf = t < BASE ? 0 : 1;
+    }
+  /* si el primer sumando es mas grande , entonces incluimos su suma + carry flag */
+  if (max (a->len, b->len) == a->len)
+    for (; i < a->len; i++)
+      {
+	t = a->digits[i] + cf;
+	c->digits[i] = t % BASE;
+	cf = t < BASE ? 0 : 1;
+      }
+  /* si es el segundo sumando el mas grande entonces incluimos su suma + carry flag */
+  else if (max (a->len, b->len) == b->len)
+    for (; i < b->len; i++)
+      {
+	t = b->digits[i] + cf;
+	c->digits[i] = t % BASE;
+	cf = t < BASE ? 0 : 1;
+      }
+  c->digits[i] = cf;
+  c->len = i + 2;
+  bint_normalize (c);
+  return c;
+}
+
+/*
+ * Compares a and b
+ * if a > b returns FIRST_GREATER   <-- the name of the macro is because "First argument" was bigger
+ * if a < b returns SECOND_GREATER
+ * if a = b returns EQUAL
+ */
+
+int
+bint_cmp (bint * a, bint * b)
+{
+  int i, negate = 0;
+  bint_normalize (a);
+  bint_normalize (b);
+  if ((b->len <= 0) && (a->len <= 0))
+    {
+      return EQUAL;
+    }
+  if ((a->sign == NEGATIVE) && (b->sign == POSITIVE))
+    return SECOND_GREATER;
+  if ((a->sign == POSITIVE) && (b->sign == NEGATIVE))
+    return FIRST_GREATER;
+
+
+  if ((a->sign == NEGATIVE) && (b->sign == NEGATIVE))
+    {
+      negate = 1;
+    }
+
+
+  if (a->len > b->len)
+    {
+      if (negate)
+	return SECOND_GREATER;
+      return FIRST_GREATER;
+    }
+  else if (a->len < b->len)
+    {
+      if (negate)
+	return FIRST_GREATER;
+      return SECOND_GREATER;
+    }
+  i = a->len - 1;
+  while (1)
+    {
+      if (a->digits[i] > b->digits[i])
+	{
+	  if (negate)
+	    return SECOND_GREATER;
+	  return FIRST_GREATER;
+	}
+
+      else if (a->digits[i] < b->digits[i])
+	{
+	  if (negate)
+	    return FIRST_GREATER;
+	  return SECOND_GREATER;
+	}
+      if (i == 0)
+	break;
+      i--;
+    }
+  return EQUAL;
+}
+
+/*
+ *  Calculates
+ *  a=a+1 
+ *  a must have enough memory to handle a carry flag to the BASE
+ *  in the most significative digit
+ */
+bint *
+bint_inc (bint * a)
+{
+  int i, cf = 0;
+  for (i = 0; i < a->len; i++)
+    {
+      a->digits[i] = (a->digits[i] + cf) + (i > 0 ? 0 : 1);
+      if ((a->digits[i]) >= BASE)
+	cf = 1;
+      else
+	cf = 0;
+      a->digits[i] = a->digits[i] % BASE;
+      if (i == a->len - 1)
+	{
+	  a->len++;
+	  a->digits[a->len - 1] = cf;
+	  break;
+	}
+      if (!cf)
+	break;
+    }
+  bint_normalize (a);
+  return a;
+}
+
+/*
+ * calculates
+ * a=a-1
+ * and fix the size if the carry flag modifies the size of the result
+ */
+bint *
+bint_dec (bint * a)
+{
+  int i, cf = 0, t, j = 0;
+  for (i = 0; i < a->len; i++)
+    {
+      t = (a->digits[i] - cf - (i > 0 ? 0 : 1));
+      if (t < 0)
+	{
+	  t = BASE - abs (t);
+	  cf = 1;
+	}
+      else
+	cf = 0;
+      a->digits[i] = t;
+    }
+  while (a->digits[a->len - 1 - j] == 0)
+    j++;
+  a->len = a->len - j;
+  if (a->len < 1)
+    {
+      a->len = 1;
+      a->digits[0] = 0;
+    }
+  bint_normalize (a);
+  return a;
+}
+
+/*
+ * Computes
+ * c = a*b
+ * c must have at least a->len+b->len+1 memory allocated 
+ */
+bint *
+bint_mul (bint * a, bint * b, bint * c)
+{
+  int i, j, t, digit, cf = 0;
+  bint_clean (c);
+  if (bint_is_zero (a) || bint_is_zero (b))
+    {
+      c->len = 1;
+      c->digits[0] = 0;
+      return c;
+    }
+  for (i = 0; i < a->len; i++)
+    for (j = 0; j < b->len; j++)
+      {
+	/* Salvamos la multiplicacion de los digitos de cada numero 
+	 * de acuerdo a la iteracion y le sumamos tanto el carry flag
+	 * que vale cero si es el principio de la iteracion o el cf 
+	 * (carry flag) si esta en otro lado de la iteracion , asi como
+	 * la acumulacion de sumas de digitos que hemos ido recopilando
+	 * traslapados i lugares con respecto a la interacion actual
+	 */
+	t = c->digits[i + j] + a->digits[i] * b->digits[j] + (j < 1 ? 0 : cf);
+	/*
+	 * Capturamos el carry flag solo basta dividir entre la base
+	 * y si eso no es cero esq debemos guardar algo que "vamos a llevar" 
+	 * en la siguiente multiplicacion
+	 */
+	cf = t / BASE;
+	/* 
+	 * Capturamos el ultimo digito de la multiplicacion y acarreo 
+	 * de todas las multiplicacioens
+	 */
+	digit = t % BASE;
+	/* lo insertamos en la memoria */
+	c->digits[i + j] = digit;
+	/* si estamos al final de la iteracion  (o sea que j > b.len - 2) 
+	 * entonces le agregamos de una vez el carry flag
+	 * ejemplo:
+	 *   92
+	 *   43
+	 *   --
+	 *  276
+	 * 368
+	 * -----
+	 * 3956
+	 * 
+	 * Esta parte es cuando pones el "27" y el "36" como es el final se tiene que poner todo
+	 * el numero.
+	 */
+	c->digits[i + b->len] = (j > b->len - 2) ? cf : 0;
+      }
+  /* quitamos los ceros iniciales si estos sobran y asignamos el valor correcto al tamanio en digitos */
+  /*
+     i = c->len;
+   */
+  /*
+     while (c->digits[--i] == 0)
+     c->len--;
+   */
+  c->len = a->len + b->len + 1;
+  c->sign = (a->sign == b->sign) ? POSITIVE : NEGATIVE;
+  bint_normalize (c);
+  return c;
+}
+
+/*
+ *  Fix zeroes , if 000001 then 1
+*/
+void
+bint_normalize (bint * x)
+{
+  int j = 0;
+  if ((x->len == 1) && (x->digits[0] == 0))
+    {
+      x->sign = POSITIVE;
+    }
+  if (x->len <= 0)
+    {
+      x->len = 1;
+      x->digits[0] = 0;
+      x->sign = POSITIVE;
+    }
+  if (x->len > 1)
+    while (x->digits[x->len - 1 - j] == 0)
+      {
+	j++;
+      }
+  x->len = x->len - j;
+  return;
+}
+
+/*
+ * Copy sign , digits and len from
+ * src to dst
+ * obviusly dst must have memory 
+ */
+
+void
+bint_copy (bint * dst, bint * src)
+{
+  bint_normalize (src);
+  dst->len = src->len;
+  dst->sign = src->sign;
+  memset (dst->digits, 0, dst->len);
+  memcpy (dst->digits, src->digits, src->len);
+  bint_normalize (dst);
+  return;
+}
+
+/*
+ * Fills all with zeroes , but not the sign
+ */
+void
+bint_clean (bint * x)
+{
+  if (x->len > 0)
+    memset (x->digits, 0, x->len);
+  x->len = 0;
+  return;
+}
+
+/*
+ * computes  
+ * x**y and saves the result in z
+ * with y long type
+ * z must have enought memory, generaly the memory needed is 
+ * z->len * y 
+ */
+
+bint *
+bint_pow2long (bint * x, unsigned long y, bint * z)
+{
+  int i;
+  bint *t = bint_alloc (4096, POSITIVE);
+  t->len = 1;
+  t->digits[0] = 1;
+  t->sign = POSITIVE;
+  if (y == 0)
+    {
+      z->digits[0] = 1;
+      z->len = 1;
+      return z;
+    }
+  for (i = 0; i < y; i++)
+    {
+      bint_mul (x, t, z);
+      bint_copy (t, z);
+      bint_clean (z);
+    }
+  bint_copy (z, t);
+/*
+  bint_free (t);
+*/
+  return z;
+}
+
+/*
+ * Calculates
+ * x*y and saves result in z
+ * note that y is a long type
+ * z must have memory
+ */
+bint *
+bint_mul_long (bint * x, unsigned long y, bint * z)
+{
+  unsigned char tmp[24];
+  int i;
+  bint *t;
+  snprintf ((char *) &tmp, sizeof (tmp), "%ld", y);
+  t = bint_alloc (strlen ((char *) &tmp) + 1, POSITIVE);
+  t->len = strlen ((char *) &tmp);
+  for (i = t->len - 1; i >= 0; i--)
+    t->digits[t->len - 1 - i] = tmp[i] - '0';
+
+  bint_normalize (t);
+  z = bint_mul (x, t, z);
+  if (y > 2)
+    z->len++;
+  bint_normalize (z);
+  bint_free (t);
+  return z;
+}
+
+/* 
+ * Function to help debugging process
+ */
+void
+bint_debug_new (bint * x, char *name, char *f, int l)
+{
+  printf ("DEBUG: %s(%d):  \t%s=", f, l, name);
+  bint_print (x);
+  return;
+}
+
+/*
+ * Right shift of digits (is like multiplying n * 10^d )
+ *
+ */
+void
+bint_shift_right_digit (bint * n, int d)
+{
+  int i;
+  if ((n->len == 1) && (n->digits[0] == 0))
+    return;
+
+  for (i = n->len - 1; i >= 0; i--)
+    n->digits[i + d] = n->digits[i];
+
+  for (i = 0; i < d; i++)
+    n->digits[i] = 0;
+
+  n->len = n->len + d;
+  bint_normalize (n);
+}
+
+/* return 1 if x is zero 
+ * else return 0
+ */
+int
+bint_is_zero (bint * x)
+{
+  bint_normalize (x);
+  if ((x->len == 1) && (x->digits[0] == 0))
+    return 1;
+  return 0;
+}
+
+/* returns 1 if x is of the form 2n 
+ * else return 0
+ */
+int
+bint_is_even (bint * x)
+{
+  bint_normalize (x);
+  if ((x->digits[0] % 2) == 0)
+    return 1;
+  return 0;
+}
+
+/*
+ * Calculates x,y,gcd such that
+ * ax+by = gcd(a,b) 
+ * gcd = gcd(a,b)
+ * lx,ly,gcd must have enough memory to allocate the results
+ */
+bint *
+bint_egcd (bint * a, bint * b, bint * lx, bint * ly, bint * gcd)
+{
+  bint *x, *y, *t, *q, *r, *m, *qx, *qy, *lx_qx, *ly_qy, *a_backup, *b_backup;
+  a_backup = bint_alloc (a->len, a->sign);
+  b_backup = bint_alloc (b->len, b->sign);
+  bint_copy (a_backup, a);
+  bint_copy (b_backup, b);
+  x = bint_alloc (a->len + b->len, POSITIVE);
+  y = bint_alloc (a->len + b->len, POSITIVE);
+  t = bint_alloc (a->len + b->len, POSITIVE);
+  q = bint_alloc (a->len + b->len, POSITIVE);
+  r = bint_alloc (a->len + b->len, POSITIVE);
+  m = bint_alloc (a->len + b->len, POSITIVE);
+  qx = bint_alloc (a->len + b->len + 1, POSITIVE);
+  qy = bint_alloc (a->len + b->len + 1, POSITIVE);
+  ly_qy = bint_alloc (a->len + b->len + 1, POSITIVE);
+  lx_qx = bint_alloc (a->len + b->len + 1, POSITIVE);
+  lx->len = 1;
+  ly->len = 1;
+  lx->digits[0] = 1;
+  ly->digits[0] = 0;
+  x->len = 1;
+  y->len = 1;
+  x->digits[0] = 0;
+  y->digits[0] = 1;
+  while (!bint_is_zero (b))
+    {
+      bint_copy (t, b);
+      q = bint_div (a, b, q, r);
+      m = bint_mod (a, b, m);
+      bint_copy (b, m);
+      bint_copy (a, t);
+      bint_copy (t, x);
+      qx = bint_mul (q, x, qx);
+      lx_qx = bint_sub (lx, qx, lx_qx);
+      bint_copy (x, lx_qx);
+      bint_copy (lx, t);
+      bint_copy (t, y);
+      qy = bint_mul (q, y, qy);
+      ly_qy = bint_sub (ly, qy, ly_qy);
+      bint_copy (y, ly_qy);
+      bint_copy (ly, t);
+    }
+  bint_copy (b, b_backup);
+  bint_copy (gcd, a);
+  bint_copy (a, a_backup);
+  bint_free (a_backup);
+  bint_free (b_backup);
+  bint_free (x);
+  bint_free (y);
+  bint_free (t);
+  bint_free (q);
+  bint_free (r);
+  bint_free (m);
+  bint_free (qx);
+  bint_free (qy);
+  bint_free (lx_qx);
+  bint_free (ly_qy);
+  return gcd;
+}
+
+
+/*
+ * Calculates the greatest common divisor
+ * this is if 
+ * x = x1*x2*x3*..*xn
+ * y = y1*y2*y3*..*ym
+ * A = { x1*x2*x3*..*xn } INTERSECTION { y1*y2*y3*..*ym }
+ * gcd = max (A)
+ */
+
+int
+bint_2_binary (bint * x, char *dst)
+{
+  bint *t1, *t2, *t3, *x2, *two ;
+  char *dst2;
+  int k = 0, i = 0;
+  t1 = bint_alloc (x->len + 1, POSITIVE);
+  t2 = bint_alloc (x->len + 1, POSITIVE);
+  t3 = bint_alloc (x->len + 1, POSITIVE);
+  x2 = bint_alloc (x->len + 1, POSITIVE);
+  dst2 = calloc (4096, sizeof (char));
+  two = bint_alloc (32, POSITIVE);
+  two->digits[0] = 2;
+  two->len = 1;
+  bint_copy (x2, x);
+  bint_clean (t2);
+  bint_clean (t3);
+  while (!bint_is_zero (x2))
+    {
+      bint_div (x2, two, t2, t3);
+      dst2[k] = t3->digits[0];
+      bint_clean (x2);
+      bint_clean (t3);
+      bint_copy (x2, t2);
+      k++;
+    }
+  for (i = k-1; i >= 0; i--)
+    dst[k - i-1] = dst2[i];
+  bint_free (t1);
+  bint_free (t2);
+  bint_free (t3);
+  bint_free (x2);
+  bint_free (two);
+  free (dst2);
+  return k;
+}
+
+bint *
+bint_gcd (bint * x, bint * y)
+{
+  bint *t;
+  int xswap = 0, yswap = 0;
+  t = bint_alloc (x->len + y->len, POSITIVE);
+  bint_clean (t);
+  bint_normalize (x);
+  bint_normalize (y);
+  if (x->sign == NEGATIVE)
+    {
+      xswap = 1;
+      x->sign = POSITIVE;
+    }
+  if (y->sign == NEGATIVE)
+    {
+      yswap = 1;
+      y->sign = POSITIVE;
+    }
+
+  /*
+     bint_debug(x,"INIT x");
+     bint_debug(y,"INIT y");
+   */
+  t = bint_mod (x, y, t);
+  /*
+     bint_debug(t,"x%y");
+   */
+  if (bint_is_zero (t))
+    {
+      /*
+         bint_debug(t,"t is zero");
+         bint_debug(y,"ret");
+       */
+      if (yswap)
+	y->sign = POSITIVE;
+      if (xswap)
+	x->sign = POSITIVE;
+      bint_free (t);
+      return y;
+    }
+  bint_clean (x);
+  /*
+     bint_debug(t,"Coping t");
+   */
+  bint_copy (x, t);
+  /*
+     bint_debug(x,"To x");
+     printf("Free t\n");
+   */
+  bint_free (t);
+  /*
+     printf("Ret gcd(y,t)\n");
+     bint_debug(y,"\ty");
+     bint_debug(t,"\tt");
+   */
+  return bint_gcd (y, x);
+
+}
+
+/*
+ * This calculates  e
+ * such that
+ * a**n = e mod m
+ */
+bint *
+bint_mod_exp (bint * a, bint * n, bint * m, bint * e)
+{
+  bint *x, *two, *q, *r, *tmp, *exp, *nback;
+  tmp = bint_alloc (a->len * n->len * m->len, POSITIVE);
+  x = bint_alloc (m->len * a->len * n->len, POSITIVE);
+  r = bint_alloc (m->len * a->len * n->len, POSITIVE);
+  q = bint_alloc ((m->len * a->len * n->len), POSITIVE);
+  nback = bint_alloc ((m->len * a->len * n->len), POSITIVE);
+  exp = bint_alloc (n->len * a->len * m->len, POSITIVE);
+  exp->len = 1;
+  exp->digits[0] = 1;
+  two = bint_alloc (32, POSITIVE);
+  two->len = 1;
+  two->digits[0] = 2;
+  x = bint_mod (a, m, x);
+  bint_normalize (x);
+  bint_copy (nback, n);
+  while (!bint_is_zero (n))
+    {
+      if (!bint_is_even (n))
+	{
+/*
+	    printf ("mult exp y x\n");
+*/
+	  tmp = bint_mul (exp, x, tmp);
+	  bint_clean (exp);
+	  bint_copy (exp, tmp);
+	  bint_clean (tmp);
+	  tmp = bint_mod (exp, m, tmp);
+	  bint_clean (exp);
+	  bint_normalize (tmp);
+	  bint_copy (exp, tmp);
+	  bint_normalize (exp);
+	  bint_clean (tmp);
+	}
+/*
+        printf ("PArte del ELSE\n");
+*/
+      tmp = bint_mul (x, x, tmp);
+      bint_clean (x);
+      bint_normalize (tmp);
+      bint_copy (x, tmp);
+      bint_clean (tmp);
+      tmp = bint_mod (x, m, tmp);
+      bint_clean (x);
+      bint_normalize (tmp);
+      bint_copy (x, tmp);
+      bint_clean (tmp);
+      q = bint_div (n, two, q, r);
+      bint_normalize (q);
+      bint_clean (n);
+      bint_copy (n, q);
+    }
+  bint_free (tmp);
+  bint_free (r);
+  bint_free (q);
+  bint_free (x);
+  bint_free (two);
+  bint_clean (e);
+  bint_normalize (exp);
+  bint_copy (e, exp);
+  bint_free (exp);
+  bint_copy (n, nback);
+  bint_free (nback);
+  return e;
+}
+
+int
+mod (int a, int m)
+{
+  int x;
+  if (a < 0)
+    {
+      if (abs (a) < m)
+	return (a + m) % m;
+      else
+	{
+	  x = abs (a / m) + 1;
+	  x = x * m;
+	  x = x + a;
+	  return x % m;
+	}
+    }
+  return a % m;
+}
+
+bint *
+bint_random (bint * dst, int size)
+{
+  int fd = open (RAND_DEVICE, O_RDONLY);
+  int i;
+  bint *prime;
+  char *p = PRIME;
+  unsigned char *buf = calloc (size, sizeof (char));
+  if (fd < 0)
+    {
+      perror ("fd");
+      fprintf (stderr, "Could not open random device at %s\n", RAND_DEVICE);
+      exit (EXIT_FAILURE);
+    }
+  read (fd, buf, size);
+  dst->len = size;
+  bint_clean (dst);
+  for (i = 0; i < size; i++)
+    dst->digits[i] = buf[i] % 10;
+  free (buf);
+  close (fd);
+  dst->len = size + 1;
+  bint_normalize (dst);
+  prime = bint_alloc (sizeof (PRIME) + 1, POSITIVE);
+  prime = atobint (p, prime);
+  if (bint_cmp (dst, prime) == FIRST_GREATER)
+    dst->len--;
+  bint_free (prime);
+  bint_normalize (dst);
+
+  return dst;
+}
+
+/* Calculates r such that  x = r mod y */
+bint *
+bint_mod (bint * x, bint * y, bint * r)
+{
+  bint *qtemp, *t1, *t2;
+  bint_clean (r);
+/*
+  bint_debug(x,"x in mod");
+  bint_debug(y,"y in mod");
+*/
+  if (x->sign == NEGATIVE)
+    {
+      x->sign = POSITIVE;
+      if (bint_cmp (x, y) != FIRST_GREATER)
+	{
+	  x->sign = NEGATIVE;
+	  t1 = bint_alloc (x->len + y->len, POSITIVE);
+	  bint_clean (t1);
+	  t1 = bint_add (x, y, t1);
+	  t2 = bint_alloc (x->len + y->len, POSITIVE);
+	  bint_clean (t2);
+	  t2 = bint_div (t1, y, t2, r);
+	  bint_free (t2);
+          bint_free (t1);
+	  bint_normalize (r);
+	  return r;
+	}
+      else
+	{
+	  t1 = bint_alloc (x->len + y->len, POSITIVE);
+	  t2 = bint_alloc (x->len + y->len, POSITIVE);
+	  bint_clean (t1);
+	  x->sign = POSITIVE;
+	  t1 = bint_div (x, y, t1, t2);
+	  bint_inc (t1);
+	  bint_clean (t2);
+	  t2 = bint_mul (t1, y, t2);
+	  bint_clean (t1);
+	  x->sign = NEGATIVE;
+	  t1 = bint_add (t2, x, t1);
+	  bint_clean (t2);
+	  qtemp = bint_alloc (x->len + y->len, POSITIVE);
+	  bint_clean (qtemp);
+	  t2 = bint_div (t1, y, qtemp, r);
+	  bint_free (qtemp);
+	 /* bint_free (t2); */
+	  bint_free (t1);
+	  bint_normalize (r);
+	  return r;
+	}
+    }
+  qtemp = bint_alloc (x->len + y->len + 1, POSITIVE);
+  bint_clean (r);
+  bint_div (x, y, qtemp, r);
+  bint_normalize (r);
+  bint_free (qtemp);
+  return r;
+}
+
+/* Calculates q,r such that 
+ * qy+r = x
+ * with r < y
+ */
+bint *
+bint_div (bint * x, bint * y, bint * q, bint * r)
+{
+  int i;
+  char xflag = 0, yflag = 0;
+  bint *tmp_exp10, *tmp;
+  bint *t1, *t2;
+  bint_clean (q);
+  /* if y is zero then division cannot be performed */
+  if ((y->len == 1) && (y->digits[0] == 0))
+    {
+      fprintf (stderr, "Division by zero!\n");
+      exit (EXIT_FAILURE);
+    }
+  /* if len of both is 1 , we do the calculus without entering the loop */
+  if ((x->len == 1) && (y->len == 1))
+    {
+      if (y->digits[0] != 0)
+	{
+	  q->len = 1;
+	  q->digits[0] = x->digits[0] / y->digits[0];
+	  r->len = 1;
+	  r->digits[0] = x->digits[0] % y->digits[0];
+	  return q;
+	}
+      else
+	{
+	  fprintf (stderr, "Division by zero\n");
+	  exit (EXIT_FAILURE);
+	}
+    }
+  /* We don't want conflicts with the substraction when the input is a negative big integer
+   * so we convert it to positive to handle it and flag it to return the original sign of the pointers
+   */
+  if (x->sign == NEGATIVE)
+    {
+      xflag = 1;
+      x->sign = POSITIVE;
+    }
+  if (y->sign == NEGATIVE)
+    {
+      yflag = 1;
+      y->sign = POSITIVE;
+    }
+  /* Clean , alloc and all stuff we will need */
+  tmp_exp10 = bint_alloc (y->len + 1, POSITIVE);
+  tmp = bint_alloc (y->len + x->len + 1, POSITIVE);
+  bint_clean (q);
+  bint_clean (r);
+  bint_clean (tmp_exp10);
+  bint_clean (tmp);
+  bint_normalize (q);
+  bint_normalize (tmp_exp10);
+  q->len = x->len - 1;
+  t1 = tmp_exp10;
+  t2 = tmp;
+/* We proceed doing substractions of x with the residues generated multiplied by 10^i  */
+  for (i = x->len - 1; i >= 0; i--)
+    {
+      bint_shift_right_digit (tmp_exp10, 1);
+      tmp_exp10->digits[0] = x->digits[i];
+      q->digits[i] = 0;
+      while (bint_cmp (tmp_exp10, y) != SECOND_GREATER)
+	{
+	  q->digits[i]++;
+	  bint_sub (tmp_exp10, y, tmp);
+	  bint_clean (tmp_exp10);
+	  bint_copy (tmp_exp10, tmp);
+	}
+    }
+  /* fit the zeroes and set the len of the quotient */
+  bint_normalize (q);
+  q->len = x->len - 1 - (y->len - 1) + 1;
+
+  /* Clean the values of tmp and r we are going to use now */
+  bint_clean (tmp);
+  bint_clean (r);
+
+/* compute r in linear time
+ *  yq+r=x
+ *  r=x-yq
+ *    q
+ *   _____
+ *  y|x
+ *    r
+ *
+ *    x-qy=r
+ */
+  tmp = bint_mul (y, q, tmp);
+  r = bint_sub (x, tmp, r);
+
+  /* fix the zeroes */
+  bint_normalize (q);
+  bint_normalize (r);
+
+/* Return back the signs if they were negative */
+  if (yflag)
+    y->sign = NEGATIVE;
+  if (xflag)
+    x->sign = NEGATIVE;
+/* Set the sign of the quotient */
+  q->sign = (y->sign != x->sign) ? NEGATIVE : POSITIVE;
+
+/* Free the temporary memory */
+  bint_free (t1);
+  bint_free (t2);
+
+  return q;
+}
+
+bint *
+bint_inverse (bint * a, bint * m, bint * inv)
+{
+  bint *x, *y, *g, *t, *a_backup;
+  int swap = 0;
+  x = bint_alloc (a->len + m->len, POSITIVE);
+  y = bint_alloc (a->len + m->len, POSITIVE);
+  g = bint_alloc (a->len + m->len, POSITIVE);
+  g = bint_egcd (a, m, x, y, g);
+  swap = 1;
+  a_backup = bint_alloc (a->len + m->len, POSITIVE);
+  bint_normalize (a);
+  bint_copy (a_backup, a);
+  t = bint_alloc (a->len + m->len, POSITIVE);
+  t = bint_mod (a, m, t);
+  bint_copy (a, t);
+  bint_free (t);
+
+  /* Lets check if the inverse exists , gcd must be 1 (linear combination of a and m   ax+my = 1)  
+   * if the inverse doesnt exists the return value is a zero in bint format
+   */
+  bint_dec (g);
+  if (!bint_is_zero (g))
+    {
+      printf ("NO INVERSE for x=");
+      bint_print (a);
+      inv->len = 1;
+      inv->digits[0] = 0;
+      return inv;
+    }
+/* Here the inverse is x but this might be a negative value, lets calculate the modulus
+ * now im proud to announce my negative modulus partitioner implementation
+ */
+  bint_clean (inv);
+  inv = bint_mod (x, m, inv);
+  bint_free (x);
+  bint_free (y);
+  bint_free (g);
+  if (swap)
+    {
+      bint_copy (a, a_backup);
+      bint_free (a_backup);
+    }
+  return inv;
+}
+
+/* prints x */
+void
+bint_print (bint * x)
+{
+  int i;
+  if (x->sign == NEGATIVE)
+    printf ("%c", x->sign);
+  for (i = x->len - 1; i >= 0; --i)
+    {
+      printf ("%d", x->digits[i]);
+    }
+  printf ("\n");
+  return;
+}

@@ -1,0 +1,38 @@
+What is?
+
+This software was made to show how ECC can be implemented
+with academical purposes, the target is to make a full
+library, the status of this is just a demo showing en encryption
+and decryption process using Elgamal over ECC with a finite group
+of characteristic p with p elements using Sophie Germain prime.
+of 192 bits.
+
+What is in this distribution?
+
+Light Elliptic Curve routines (LECC 0.2)
+Elgamal routines 0.1 using LECC 0.2
+LightMP library for computing big numbers 0.3 (bad performance for now) 
+
+
+How to build?
+
+use compile.sh to build
+
+TODO
+
+Implement LIGHTMP to work with 64 bit integers, clean de code 
+and add more comments.
+
+Who made it?
+
+Eduardo Ruiz Duarte
+
+If you are interested or want to do comments use this email:
+beck@math.co.ro
+
+
+pseudo-license
+
+This source is free you can do whatever you want with it.
+Just preserve the name of the author in the source files, all files
+and this file in the distribution
